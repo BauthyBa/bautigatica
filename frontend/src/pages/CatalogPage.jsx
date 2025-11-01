@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import '../App.css';
 import { supabase } from '../lib/supabaseClient';
@@ -203,6 +204,10 @@ export function CatalogPage() {
           </section>
         </>
       )}
+      <footer className="catalog-footer">
+        <span>¿Sos del equipo de Panaderia Bautista?</span>
+        <Link to="/admin">Ingresar al panel</Link>
+      </footer>
     </div>
   );
 }

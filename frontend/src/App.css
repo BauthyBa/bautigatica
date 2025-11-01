@@ -254,6 +254,27 @@
   box-shadow: 0 10px 25px rgba(244, 114, 182, 0.25);
 }
 
+.catalog-footer {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  align-self: center;
+  padding: 0.75rem 1.25rem;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.16);
+  color: #475569;
+  font-weight: 500;
+}
+
+.catalog-footer a {
+  color: #7c3aed;
+  font-weight: 600;
+}
+
+.catalog-footer a:hover {
+  text-decoration: underline;
+}
+
 @media (max-width: 980px) {
   .layout {
     grid-template-columns: 1fr;
