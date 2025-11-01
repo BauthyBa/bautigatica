@@ -8,6 +8,19 @@ const ADMIN_CREDENTIALS = {
 };
 
 const SESSION_KEY = 'supabase-admin-session';
+const STORAGE_BUCKET = 'product-images';
+
+const extractStoragePath = (url) => {
+  if (!url) return null;
+  try {
+    const decoded = decodeURIComponent(url);
+    const [, path] = decoded.split(`${STORAGE_BUCKET}/`);
+    return path ?? null;
+  } catch (error) {
+    console.error('No se pudo obtener la ruta del archivo', error);
+    return null;
+  }
+};
 
 export function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -24,12 +37,40 @@ export function AdminPage() {
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [imageFile, setImageFile] = useState(null);
+  const [products, setProducts] = useState([]);
+  const [loadingProducts, setLoadingProducts] = useState(false);
+  const [productsError, setProductsError] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [currentImageUrl, setCurrentImageUrl] = useState('');
   const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (isAuthenticated && typeof window !== 'undefined') {
       window.localStorage.setItem(SESSION_KEY, 'true');
     }
+  }, [isAuthenticated]);
+
+  const loadProducts = async () => {
+    setLoadingProducts(true);
+    setProductsError('');
+    const { data, error } = await supabase
+      .from('products')
+      .select('id,name,description,price,image,created_at')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error al cargar productos', error);
+      setProductsError('No pudimos obtener los productos. Refrescá para reintentar.');
+      setProducts([]);
+    } else {
+      setProducts(data ?? []);
+    }
+    setLoadingProducts(false);
+  };
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    loadProducts();
   }, [isAuthenticated]);
 
   const handleLoginSubmit = (event) => {
@@ -47,6 +88,20 @@ export function AdminPage() {
     }
   };
 
+  const resetForm = () => {
+    setProductForm({
+      name: '',
+      description: '',
+      price: '',
+    });
+    setImageFile(null);
+    setEditingId(null);
+    setCurrentImageUrl('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const handleProductSubmit = async (event) => {
     event.preventDefault();
     if (!productForm.name || !productForm.price) {
@@ -54,39 +109,44 @@ export function AdminPage() {
       return;
     }
 
+    const isEditing = Boolean(editingId);
+
     setSubmitting(true);
     setFeedback('');
 
-    if (!imageFile) {
+    if (!imageFile && !isEditing) {
       setFeedback('Subí una imagen del producto para continuar.');
-      return;
-    }
-
-    let imageUrl = null;
-
-    const fileExtension = imageFile.name.split('.').pop() || 'jpg';
-    const sanitizedName = imageFile.name
-      .toLowerCase()
-      .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9.-]/g, '');
-    const path = `products/${Date.now()}-${sanitizedName || `imagen.${fileExtension}`}`;
-
-    const { error: storageError } = await supabase.storage
-      .from('product-images')
-      .upload(path, imageFile, {
-        cacheControl: '3600',
-        upsert: false,
-      });
-
-    if (storageError) {
-      console.error('Storage upload error', storageError);
-      setFeedback('No se pudo subir la imagen. Revisá el archivo e intentá de nuevo.');
       setSubmitting(false);
       return;
     }
 
-    const { data: publicData } = supabase.storage.from('product-images').getPublicUrl(path);
-    imageUrl = publicData?.publicUrl ?? null;
+    let imageUrl = currentImageUrl;
+
+    if (imageFile) {
+      const fileExtension = imageFile.name.split('.').pop() || 'jpg';
+      const sanitizedName = imageFile.name
+        .toLowerCase()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9.-]/g, '');
+      const path = `products/${Date.now()}-${sanitizedName || `imagen.${fileExtension}`}`;
+
+      const { error: storageError } = await supabase.storage
+        .from(STORAGE_BUCKET)
+        .upload(path, imageFile, {
+          cacheControl: '3600',
+          upsert: false,
+        });
+
+      if (storageError) {
+        console.error('Error al subir la imagen', storageError);
+        setFeedback('No se pudo subir la imagen. Revisá el archivo e intentá de nuevo.');
+        setSubmitting(false);
+        return;
+      }
+
+      const { data: publicData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+      imageUrl = publicData?.publicUrl ?? null;
+    }
 
     const payload = {
       name: productForm.name,
@@ -96,25 +156,84 @@ export function AdminPage() {
     };
 
     try {
-      const { error } = await supabase.from('products').insert(payload);
-      if (error) {
-        console.error('Supabase insert error', error);
-        setFeedback('No pudimos guardar el producto. Probá de nuevo.');
+      if (isEditing) {
+        const { error } = await supabase.from('products').update(payload).eq('id', editingId);
+        if (error) {
+          console.error('Error al actualizar el producto', error);
+          setFeedback('No pudimos actualizar el producto. Probá de nuevo.');
+        } else {
+          setFeedback('Producto actualizado con éxito.');
+          resetForm();
+          await loadProducts();
+        }
       } else {
-        setFeedback('Producto creado con éxito.');
-        setProductForm({
-          name: '',
-          description: '',
-          price: '',
-        });
-        setImageFile(null);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
+        const { error } = await supabase.from('products').insert(payload);
+        if (error) {
+          console.error('Error al crear el producto', error);
+          setFeedback('No pudimos guardar el producto. Probá de nuevo.');
+        } else {
+          setFeedback('Producto creado con éxito.');
+          resetForm();
+          await loadProducts();
         }
       }
     } catch (err) {
-      console.error('Unexpected error', err);
+      console.error('Error inesperado', err);
       setFeedback('Ocurrió un error inesperado. Intentá más tarde.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleEdit = (product) => {
+    setEditingId(product.id);
+    setProductForm({
+      name: product.name ?? '',
+      description: product.description ?? '',
+      price: product.price ? String(product.price) : '',
+    });
+    setCurrentImageUrl(product.image ?? '');
+    setImageFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    setFeedback('');
+  };
+
+  const handleDelete = async (product) => {
+    const confirmed = window.confirm(
+      `¿Seguro que querés eliminar "${product.name}"? Esta acción no se puede deshacer.`,
+    );
+    if (!confirmed) return;
+
+    setSubmitting(true);
+    setFeedback('');
+
+    const imagePath = extractStoragePath(product.image);
+
+    try {
+      const { error } = await supabase.from('products').delete().eq('id', product.id);
+      if (error) {
+        console.error('Error al eliminar el producto', error);
+        setFeedback('No pudimos eliminar el producto. Probá de nuevo.');
+      } else {
+        if (imagePath) {
+          const { error: storageError } = await supabase.storage
+            .from(STORAGE_BUCKET)
+            .remove([imagePath]);
+          if (storageError) {
+            console.warn('No se pudo borrar la imagen asociada', storageError);
+          }
+        }
+        setFeedback('Producto eliminado.');
+        if (editingId === product.id) {
+          resetForm();
+        }
+        await loadProducts();
+      }
+    } catch (err) {
+      console.error('Error inesperado al eliminar', err);
+      setFeedback('Ocurrió un error inesperado al eliminar el producto.');
     } finally {
       setSubmitting(false);
     }
@@ -125,6 +244,8 @@ export function AdminPage() {
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem(SESSION_KEY);
     }
+    resetForm();
+    setProducts([]);
   };
 
   if (!isAuthenticated) {
@@ -183,7 +304,7 @@ export function AdminPage() {
               onChange={(event) =>
                 setProductForm((prev) => ({ ...prev, name: event.target.value }))
               }
-              placeholder="Ej. Remera básica"
+              placeholder="Ej. Pan de masa madre"
               required
             />
           </label>
@@ -208,7 +329,7 @@ export function AdminPage() {
               onChange={(event) =>
                 setProductForm((prev) => ({ ...prev, price: event.target.value }))
               }
-              placeholder="Ej. 12000"
+              placeholder="Ej. 1200"
               required
             />
           </label>
@@ -223,21 +344,94 @@ export function AdminPage() {
                 setImageFile(file ?? null);
               }}
             />
+            <span className="admin-hint">
+              {imageFile
+                ? `Archivo seleccionado: ${imageFile.name}`
+                : editingId && currentImageUrl
+                ? 'Se mantiene la imagen actual. Subí otra para reemplazarla.'
+                : 'Subí una foto en formato JPG o PNG.'}
+            </span>
           </label>
           {feedback && (
             <p
               className={`admin-feedback ${
-                feedback.includes('éxito') ? 'admin-feedback--success' : 'admin-feedback--error'
+                feedback.includes('éxito') || feedback.includes('eliminado')
+                  ? 'admin-feedback--success'
+                  : 'admin-feedback--error'
               }`}
             >
               {feedback}
             </p>
           )}
-          <button type="submit" className="admin-primary" disabled={submitting}>
-            {submitting ? 'Guardando...' : 'Crear producto'}
-          </button>
+          <div className="admin-form__actions">
+            <button type="submit" className="admin-primary" disabled={submitting}>
+              {submitting
+                ? 'Guardando...'
+                : editingId
+                ? 'Actualizar producto'
+                : 'Crear producto'}
+            </button>
+            {editingId && (
+              <button
+                type="button"
+                className="admin-secondary"
+                onClick={resetForm}
+                disabled={submitting}
+              >
+                Cancelar edición
+              </button>
+            )}
+          </div>
         </form>
+        {loadingProducts ? (
+          <p className="admin-feedback">Cargando productos...</p>
+        ) : (
+          <div className="admin-list">
+            <div className="admin-list__header">
+              <h2>Productos cargados</h2>
+              <button type="button" className="admin-secondary" onClick={loadProducts}>
+                Recargar
+              </button>
+            </div>
+            {productsError && (
+              <p className="admin-feedback admin-feedback--error">{productsError}</p>
+            )}
+            {!productsError && products.length === 0 && (
+              <p className="admin-feedback">Todavía no hay productos cargados.</p>
+            )}
+            <ul className="admin-list__items">
+              {products.map((product) => (
+                <li key={product.id} className="admin-list__item">
+                  <div className="admin-list__info">
+                    <strong>{product.name}</strong>
+                    <span>${Number(product.price || 0).toLocaleString('es-AR')}</span>
+                    {product.description && <p>{product.description}</p>}
+                  </div>
+                  <div className="admin-list__actions">
+                    <button
+                      type="button"
+                      className="admin-secondary"
+                      onClick={() => handleEdit(product)}
+                      disabled={submitting}
+                    >
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      className="admin-danger"
+                      onClick={() => handleDelete(product)}
+                      disabled={submitting}
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
