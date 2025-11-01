@@ -60,7 +60,9 @@ export function AdminPage() {
 
     if (error) {
       console.error('Error al cargar productos', error);
-      setProductsError('No pudimos obtener los productos. Refrescá para reintentar.');
+      setProductsError(
+        `No pudimos obtener los productos (${error.message ?? 'revisá las policies de Supabase'}).`,
+      );
       setProducts([]);
     } else {
       setProducts(data ?? []);
@@ -157,20 +159,24 @@ export function AdminPage() {
 
     try {
       if (isEditing) {
-        const { error } = await supabase.from('products').update(payload).eq('id', editingId);
+        const { error } = await supabase
+          .from('products')
+          .update(payload)
+          .eq('id', editingId)
+          .select();
         if (error) {
           console.error('Error al actualizar el producto', error);
-          setFeedback('No pudimos actualizar el producto. Probá de nuevo.');
+          setFeedback(`No pudimos actualizar el producto. Detalle: ${error.message}`);
         } else {
           setFeedback('Producto actualizado con éxito.');
           resetForm();
           await loadProducts();
         }
       } else {
-        const { error } = await supabase.from('products').insert(payload);
+        const { error } = await supabase.from('products').insert([payload]).select();
         if (error) {
           console.error('Error al crear el producto', error);
-          setFeedback('No pudimos guardar el producto. Probá de nuevo.');
+          setFeedback(`No pudimos guardar el producto. Detalle: ${error.message}`);
         } else {
           setFeedback('Producto creado con éxito.');
           resetForm();
@@ -212,10 +218,10 @@ export function AdminPage() {
     const imagePath = extractStoragePath(product.image);
 
     try {
-      const { error } = await supabase.from('products').delete().eq('id', product.id);
+      const { error } = await supabase.from('products').delete().eq('id', product.id).select();
       if (error) {
         console.error('Error al eliminar el producto', error);
-        setFeedback('No pudimos eliminar el producto. Probá de nuevo.');
+        setFeedback(`No pudimos eliminar el producto. Detalle: ${error.message}`);
       } else {
         if (imagePath) {
           const { error: storageError } = await supabase.storage
@@ -434,4 +440,3 @@ export function AdminPage() {
     </div>
   );
 }
-
