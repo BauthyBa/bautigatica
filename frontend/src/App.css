@@ -340,6 +340,11 @@
   resize: vertical;
 }
 
+.admin-card input[type='file'] {
+  padding: 0.5rem;
+  background: none;
+}
+
 .admin-primary,
 .admin-secondary {
   border: none;

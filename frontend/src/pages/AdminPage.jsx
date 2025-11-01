@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import '../App.css';
 import { supabase } from '../lib/supabaseClient';
 
@@ -24,6 +24,8 @@ export function AdminPage() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState('');
+  const [imageFile, setImageFile] = useState(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (isAuthenticated && typeof window !== 'undefined') {
@@ -56,11 +58,39 @@ export function AdminPage() {
     setSubmitting(true);
     setFeedback('');
 
+    let imageUrl = productForm.image || null;
+
+    if (imageFile) {
+      const fileExtension = imageFile.name.split('.').pop() || 'jpg';
+      const sanitizedName = imageFile.name
+        .toLowerCase()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9.-]/g, '');
+      const path = `products/${Date.now()}-${sanitizedName || `imagen.${fileExtension}`}`;
+
+      const { error: storageError } = await supabase.storage
+        .from('product-images')
+        .upload(path, imageFile, {
+          cacheControl: '3600',
+          upsert: false,
+        });
+
+      if (storageError) {
+        console.error('Storage upload error', storageError);
+        setFeedback('No se pudo subir la imagen. Revisá el archivo e intentá de nuevo.');
+        setSubmitting(false);
+        return;
+      }
+
+      const { data: publicData } = supabase.storage.from('product-images').getPublicUrl(path);
+      imageUrl = publicData?.publicUrl ?? null;
+    }
+
     const payload = {
       name: productForm.name,
       description: productForm.description || null,
       price: Number(productForm.price),
-      image: productForm.image || null,
+      image: imageUrl,
     };
 
     try {
@@ -76,6 +106,10 @@ export function AdminPage() {
           price: '',
           image: '',
         });
+        setImageFile(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
       }
     } catch (err) {
       console.error('Unexpected error', err);
@@ -188,6 +222,18 @@ export function AdminPage() {
               placeholder="https://..."
             />
           </label>
+          <label>
+            Cargar imagen (opcional)
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                setImageFile(file ?? null);
+              }}
+            />
+          </label>
           {feedback && (
             <p
               className={`admin-feedback ${
@@ -205,4 +251,3 @@ export function AdminPage() {
     </div>
   );
 }
-
