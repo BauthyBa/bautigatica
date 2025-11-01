@@ -20,7 +20,6 @@ export function AdminPage() {
     name: '',
     description: '',
     price: '',
-    image: '',
   });
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -58,33 +57,36 @@ export function AdminPage() {
     setSubmitting(true);
     setFeedback('');
 
-    let imageUrl = productForm.image || null;
-
-    if (imageFile) {
-      const fileExtension = imageFile.name.split('.').pop() || 'jpg';
-      const sanitizedName = imageFile.name
-        .toLowerCase()
-        .replace(/\s+/g, '-')
-        .replace(/[^a-z0-9.-]/g, '');
-      const path = `products/${Date.now()}-${sanitizedName || `imagen.${fileExtension}`}`;
-
-      const { error: storageError } = await supabase.storage
-        .from('product-images')
-        .upload(path, imageFile, {
-          cacheControl: '3600',
-          upsert: false,
-        });
-
-      if (storageError) {
-        console.error('Storage upload error', storageError);
-        setFeedback('No se pudo subir la imagen. Revisá el archivo e intentá de nuevo.');
-        setSubmitting(false);
-        return;
-      }
-
-      const { data: publicData } = supabase.storage.from('product-images').getPublicUrl(path);
-      imageUrl = publicData?.publicUrl ?? null;
+    if (!imageFile) {
+      setFeedback('Subí una imagen del producto para continuar.');
+      return;
     }
+
+    let imageUrl = null;
+
+    const fileExtension = imageFile.name.split('.').pop() || 'jpg';
+    const sanitizedName = imageFile.name
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9.-]/g, '');
+    const path = `products/${Date.now()}-${sanitizedName || `imagen.${fileExtension}`}`;
+
+    const { error: storageError } = await supabase.storage
+      .from('product-images')
+      .upload(path, imageFile, {
+        cacheControl: '3600',
+        upsert: false,
+      });
+
+    if (storageError) {
+      console.error('Storage upload error', storageError);
+      setFeedback('No se pudo subir la imagen. Revisá el archivo e intentá de nuevo.');
+      setSubmitting(false);
+      return;
+    }
+
+    const { data: publicData } = supabase.storage.from('product-images').getPublicUrl(path);
+    imageUrl = publicData?.publicUrl ?? null;
 
     const payload = {
       name: productForm.name,
@@ -104,7 +106,6 @@ export function AdminPage() {
           name: '',
           description: '',
           price: '',
-          image: '',
         });
         setImageFile(null);
         if (fileInputRef.current) {
@@ -212,18 +213,7 @@ export function AdminPage() {
             />
           </label>
           <label>
-            URL de imagen
-            <input
-              type="url"
-              value={productForm.image}
-              onChange={(event) =>
-                setProductForm((prev) => ({ ...prev, image: event.target.value }))
-              }
-              placeholder="https://..."
-            />
-          </label>
-          <label>
-            Cargar imagen (opcional)
+            Imagen del producto
             <input
               ref={fileInputRef}
               type="file"
