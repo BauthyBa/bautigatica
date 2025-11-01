@@ -198,6 +198,14 @@ export function CatalogPage() {
                   <button className="cart__checkout" onClick={handleCheckout}>
                     Finalizar compra por WhatsApp
                   </button>
+                  <a
+                    className="cart__checkout cart__checkout--mp"
+                    href="https://mpago.li/2i3s2r8"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Pagar con Tarjeta
+                  </a>
                 </>
               )}
             </aside>
