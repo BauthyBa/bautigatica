@@ -11,6 +11,7 @@ const FALLBACK_PRODUCTS = [
     price: 4200,
     image:
       'https://images.unsplash.com/photo-1608198093002-ad4e005484ec?auto=format&fit=crop&w=800&q=80',
+    payment_link: 'https://mpago.li/2i3s2r8',
   },
   {
     id: 'demo-2',
@@ -19,6 +20,7 @@ const FALLBACK_PRODUCTS = [
     price: 2500,
     image:
       'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=800&q=80',
+    payment_link: 'https://mpago.li/2i3s2r8',
   },
   {
     id: 'demo-3',
@@ -27,6 +29,7 @@ const FALLBACK_PRODUCTS = [
     price: 5300,
     image:
       'https://images.unsplash.com/photo-1517430816045-df4b7de11d1d?auto=format&fit=crop&w=800&q=80',
+    payment_link: 'https://mpago.li/2i3s2r8',
   },
 ];
 
@@ -35,6 +38,7 @@ export function CatalogPage() {
   const [cart, setCart] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [viewMode, setViewMode] = useState('grid');
 
   useEffect(() => {
     const loadProducts = async () => {
@@ -42,7 +46,7 @@ export function CatalogPage() {
       setError('');
       const { data, error: supabaseError } = await supabase
         .from('products')
-        .select('id,name,description,price,image');
+        .select('id,name,description,price,image,payment_link');
 
       if (supabaseError || !data?.length) {
         if (supabaseError) {
@@ -142,9 +146,31 @@ export function CatalogPage() {
         <>
           {error && <div className="status status--error">{error}</div>}
           <section className="layout">
-            <div className="catalog">
+            <div className="catalog-controls">
+              <span>Vista</span>
+              <div className="view-toggle">
+                <button
+                  type="button"
+                  className={viewMode === 'grid' ? 'is-active' : ''}
+                  onClick={() => setViewMode('grid')}
+                >
+                  Tarjetas
+                </button>
+                <button
+                  type="button"
+                  className={viewMode === 'row' ? 'is-active' : ''}
+                  onClick={() => setViewMode('row')}
+                >
+                  Lista
+                </button>
+              </div>
+            </div>
+            <div className={`catalog ${viewMode === 'row' ? 'catalog--row' : ''}`}>
               {products.map((product) => (
-                <article key={product.id} className="product-card">
+                <article
+                  key={product.id}
+                  className={`product-card ${viewMode === 'row' ? 'product-card--row' : ''}`}
+                >
                   <img
                     src={product.image}
                     alt={product.name}
@@ -157,9 +183,19 @@ export function CatalogPage() {
                       ${Number(product.price || 0).toLocaleString('es-AR')}
                     </span>
                   </div>
-                  <button className="product-card__cta" onClick={() => addToCart(product)}>
-                    Agregar al carrito
-                  </button>
+                  <div className="product-card__actions">
+                    <button className="product-card__cta" onClick={() => addToCart(product)}>
+                      Agregar al carrito
+                    </button>
+                    <a
+                      className="product-card__cta product-card__cta--link"
+                      href={product.payment_link || 'https://mpago.li/2i3s2r8'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Pagar ahora
+                    </a>
+                  </div>
                 </article>
               ))}
               {!products.length && (
@@ -200,7 +236,7 @@ export function CatalogPage() {
                   </button>
                   <a
                     className="cart__checkout cart__checkout--mp"
-                    href="https://mpago.li/2i3s2r8"
+                    href="https://link.mercadopago.com.ar/bautibarbero"
                     target="_blank"
                     rel="noopener noreferrer"
                   >

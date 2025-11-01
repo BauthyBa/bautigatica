@@ -33,6 +33,7 @@ export function AdminPage() {
     name: '',
     description: '',
     price: '',
+    payment_link: '',
   });
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -55,7 +56,7 @@ export function AdminPage() {
     setProductsError('');
     const { data, error } = await supabase
       .from('products')
-      .select('id,name,description,price,image,created_at')
+      .select('id,name,description,price,image,payment_link,created_at')
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -95,6 +96,7 @@ export function AdminPage() {
       name: '',
       description: '',
       price: '',
+      payment_link: '',
     });
     setImageFile(null);
     setEditingId(null);
@@ -155,6 +157,7 @@ export function AdminPage() {
       description: productForm.description || null,
       price: Number(productForm.price),
       image: imageUrl,
+      payment_link: productForm.payment_link || null,
     };
 
     try {
@@ -197,6 +200,7 @@ export function AdminPage() {
       name: product.name ?? '',
       description: product.description ?? '',
       price: product.price ? String(product.price) : '',
+      payment_link: product.payment_link ?? '',
     });
     setCurrentImageUrl(product.image ?? '');
     setImageFile(null);
@@ -340,6 +344,17 @@ export function AdminPage() {
             />
           </label>
           <label>
+            Link de pago (opcional)
+            <input
+              type="url"
+              value={productForm.payment_link}
+              onChange={(event) =>
+                setProductForm((prev) => ({ ...prev, payment_link: event.target.value }))
+              }
+              placeholder="https://link.mercadopago.com.ar/..."
+            />
+          </label>
+          <label>
             Imagen del producto
             <input
               ref={fileInputRef}
@@ -412,6 +427,16 @@ export function AdminPage() {
                     <strong>{product.name}</strong>
                     <span>${Number(product.price || 0).toLocaleString('es-AR')}</span>
                     {product.description && <p>{product.description}</p>}
+                    {product.payment_link && (
+                      <a
+                        className="admin-list__link"
+                        href={product.payment_link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Link de pago
+                      </a>
+                    )}
                   </div>
                   <div className="admin-list__actions">
                     <button
