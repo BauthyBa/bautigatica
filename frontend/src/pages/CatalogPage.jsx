@@ -8,7 +8,8 @@ const FALLBACK_PRODUCTS = [
     id: 'demo-1',
     name: 'Pan de masa madre',
     description: 'Horneado lentamente con fermento natural y harina orgánica.',
-    price: 4200,
+    price_transfer: 4200,
+    price_card: 4700,
     image:
       'https://images.unsplash.com/photo-1608198093002-ad4e005484ec?auto=format&fit=crop&w=800&q=80',
     payment_link: 'https://mpago.li/2i3s2r8',
@@ -17,7 +18,8 @@ const FALLBACK_PRODUCTS = [
     id: 'demo-2',
     name: 'Medialunas artesanales',
     description: 'Dobladas a mano, con manteca y glaseado liviano.',
-    price: 2500,
+    price_transfer: 2500,
+    price_card: 2800,
     image:
       'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=800&q=80',
     payment_link: 'https://mpago.li/2i3s2r8',
@@ -26,12 +28,30 @@ const FALLBACK_PRODUCTS = [
     id: 'demo-3',
     name: 'Tarta frutal',
     description: 'Base de manteca con crema pastelera y frutas de estación.',
-    price: 5300,
+    price_transfer: 5300,
+    price_card: 5800,
     image:
       'https://images.unsplash.com/photo-1517430816045-df4b7de11d1d?auto=format&fit=crop&w=800&q=80',
     payment_link: 'https://mpago.li/2i3s2r8',
   },
 ];
+
+const normalizeProduct = (product) => {
+  const transferRaw = Number(product.price_transfer ?? product.price ?? 0);
+  const transfer = Number.isNaN(transferRaw) ? 0 : transferRaw;
+  const cardRaw = Number(product.price_card);
+  const cardValue =
+    product.price_card === null || product.price_card === undefined || Number.isNaN(cardRaw)
+      ? null
+      : cardRaw;
+
+  return {
+    ...product,
+    price_transfer: transfer,
+    price_card: cardValue,
+    price: transfer,
+  };
+};
 
 export function CatalogPage() {
   const [products, setProducts] = useState([]);
@@ -39,6 +59,17 @@ export function CatalogPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [viewMode, setViewMode] = useState('grid');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [priceCap, setPriceCap] = useState(null);
+  const currencyFormatter = useMemo(
+    () =>
+      new Intl.NumberFormat('es-AR', {
+        style: 'currency',
+        currency: 'ARS',
+        maximumFractionDigits: 0,
+      }),
+    [],
+  );
 
   useEffect(() => {
     const loadProducts = async () => {
@@ -46,16 +77,16 @@ export function CatalogPage() {
       setError('');
       const { data, error: supabaseError } = await supabase
         .from('products')
-        .select('id,name,description,price,image,payment_link');
+        .select('id,name,description,price,price_transfer,price_card,image,payment_link');
 
       if (supabaseError || !data?.length) {
         if (supabaseError) {
           console.error('Supabase error', supabaseError);
           setError('No pudimos cargar los productos. Mostramos algunos de ejemplo.');
         }
-        setProducts(FALLBACK_PRODUCTS);
+        setProducts(FALLBACK_PRODUCTS.map(normalizeProduct));
       } else {
-        setProducts(data);
+        setProducts(data.map(normalizeProduct));
       }
       setLoading(false);
     };
@@ -63,12 +94,54 @@ export function CatalogPage() {
     loadProducts();
   }, []);
 
+  useEffect(() => {
+    if (!products.length) return;
+    const max = products.reduce((acc, product) => {
+      const priceValue = Number(product.price_transfer ?? product.price ?? 0);
+      if (!Number.isFinite(priceValue)) return acc;
+      return Math.max(acc, priceValue);
+    }, 0);
+    setPriceCap(max);
+  }, [products]);
+
+  const minPrice = useMemo(() => {
+    if (!products.length) return 0;
+    let min = Infinity;
+    for (const product of products) {
+      const value = Number(product.price_transfer ?? product.price ?? 0);
+      if (Number.isFinite(value)) {
+        min = Math.min(min, value);
+      }
+    }
+    return min === Infinity ? 0 : min;
+  }, [products]);
+
+  const maxPrice = useMemo(() => {
+    if (!products.length) return 0;
+    return products.reduce((acc, product) => {
+      const value = Number(product.price_transfer ?? product.price ?? 0);
+      if (!Number.isFinite(value)) return acc;
+      return Math.max(acc, value);
+    }, 0);
+  }, [products]);
+
   const cartItems = useMemo(
     () =>
-      Object.values(cart).map((item) => ({
-        ...item,
-        subtotal: item.quantity * item.price,
-      })),
+      Object.values(cart).map((item) => {
+        const unitPrice = item.price_transfer ?? item.price ?? 0;
+        const cardVariant =
+          item.price_card !== undefined && item.price_card !== null
+            ? item.price_card
+            : item.priceCard !== undefined && item.priceCard !== null
+            ? item.priceCard
+            : null;
+        return {
+          ...item,
+          unitPrice,
+          price_card: cardVariant,
+          subtotal: item.quantity * unitPrice,
+        };
+      }),
     [cart],
   );
 
@@ -76,6 +149,22 @@ export function CatalogPage() {
     () => cartItems.reduce((sum, item) => sum + item.subtotal, 0),
     [cartItems],
   );
+
+  const filteredProducts = useMemo(() => {
+    const normalizedTerm = searchTerm.trim().toLowerCase();
+    return products.filter((product) => {
+      const searchable = `${product.name ?? ''} ${product.description ?? ''}`.toLowerCase();
+      const matchesSearch = normalizedTerm ? searchable.includes(normalizedTerm) : true;
+      const priceValue = Number(product.price_transfer ?? product.price ?? 0) || 0;
+      const matchesPrice = priceCap ? priceValue <= priceCap : true;
+      return matchesSearch && matchesPrice;
+    });
+  }, [products, searchTerm, priceCap]);
+
+  const clearFilters = () => {
+    setSearchTerm('');
+    setPriceCap(maxPrice);
+  };
 
   const addToCart = (product) => {
     setCart((prev) => {
@@ -108,21 +197,22 @@ export function CatalogPage() {
 
   const handleCheckout = () => {
     if (!cartItems.length) return;
-    const formatter = new Intl.NumberFormat('es-AR', {
-      style: 'currency',
-      currency: 'ARS',
-      maximumFractionDigits: 0,
-    });
 
-    const lines = cartItems.map(
-      (item) =>
-        `• ${item.name} x${item.quantity} (${formatter.format(item.price)} c/u) = ${formatter.format(item.subtotal)}`,
-    );
+    const lines = cartItems.map((item) => {
+      const transferLabel = currencyFormatter.format(item.unitPrice);
+      const cardLabel =
+        item.price_card !== null && item.price_card !== undefined
+          ? currencyFormatter.format(item.price_card)
+          : null;
+
+      const cardText = cardLabel ? ` / ${cardLabel} tarjeta` : '';
+      return `• ${item.name} x${item.quantity} (${transferLabel} transferencia${cardText}) = ${currencyFormatter.format(item.subtotal)}`;
+    });
 
     const message = [
       'Hola! Quisiera hacer la siguiente compra:',
       ...lines,
-      `Total: ${formatter.format(total)}`,
+      `Total: ${currencyFormatter.format(total)}`,
     ].join('\n');
 
     const whatsappNumber = '3515306105';
@@ -135,9 +225,7 @@ export function CatalogPage() {
   return (
     <div className="page page--catalog">
       <header className="hero">
-        <div className="hero__badge">Hecho en Córdoba</div>
         <h1>Panaderia Bautista</h1>
-        <p>Pan fresco, facturas y tortas caseras listas para tu mesa cada mañana.</p>
       </header>
 
       {loading ? (
@@ -146,61 +234,110 @@ export function CatalogPage() {
         <>
           {error && <div className="status status--error">{error}</div>}
           <section className="layout">
-            <div className="catalog-controls">
-              <span>Vista</span>
-              <div className="view-toggle">
-                <button
-                  type="button"
-                  className={viewMode === 'grid' ? 'is-active' : ''}
-                  onClick={() => setViewMode('grid')}
-                >
-                  Tarjetas
-                </button>
-                <button
-                  type="button"
-                  className={viewMode === 'row' ? 'is-active' : ''}
-                  onClick={() => setViewMode('row')}
-                >
-                  Lista
+            <aside className="filters">
+              <div className="filters__header">
+                <h2>Filtros</h2>
+                <button type="button" onClick={clearFilters}>
+                  Limpiar
                 </button>
               </div>
-            </div>
-            <div className={`catalog ${viewMode === 'row' ? 'catalog--row' : ''}`}>
-              {products.map((product) => (
-                <article
-                  key={product.id}
-                  className={`product-card ${viewMode === 'row' ? 'product-card--row' : ''}`}
-                >
-                  <img
-                    src={product.image}
-                    alt={product.name}
-                    className="product-card__image"
+              <label className="filters__field">
+                Buscar
+                <input
+                  type="search"
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder="Nombre o descripción"
+                />
+              </label>
+              <div className="filters__field">
+                <span>Precio máximo</span>
+                <div className="filters__range">
+                  <input
+                    type="range"
+                    min={minPrice || 0}
+                    max={maxPrice || 0}
+                    value={priceCap ?? maxPrice ?? 0}
+                    onChange={(event) => setPriceCap(Number(event.target.value))}
+                    disabled={!maxPrice}
                   />
+                  <span>
+                    {maxPrice
+                      ? `Hasta ${currencyFormatter.format(priceCap ?? maxPrice ?? 0)}`
+                      : 'Todos los precios'}
+                  </span>
+                </div>
+              </div>
+              <div className="filters__field">
+                <span>Vista</span>
+                <div className="view-toggle">
+                  <button
+                    type="button"
+                    className={viewMode === 'grid' ? 'is-active' : ''}
+                    onClick={() => setViewMode('grid')}
+                  >
+                    Tarjetas
+                  </button>
+                  <button
+                    type="button"
+                    className={viewMode === 'row' ? 'is-active' : ''}
+                    onClick={() => setViewMode('row')}
+                  >
+                    Lista
+                  </button>
+                </div>
+              </div>
+            </aside>
+
+            <div className="catalog-area">
+              <div className={`catalog ${viewMode === 'row' ? 'catalog--row' : ''}`}>
+                {filteredProducts.map((product) => (
+                  <article
+                    key={product.id}
+                    className={`product-card ${viewMode === 'row' ? 'product-card--row' : ''}`}
+                  >
+                    <img
+                      src={product.image}
+                      alt={product.name}
+                      className="product-card__image"
+                    />
                   <div className="product-card__body">
                     <h2>{product.name}</h2>
                     <p>{product.description}</p>
-                    <span className="product-card__price">
-                      ${Number(product.price || 0).toLocaleString('es-AR')}
-                    </span>
+                    <div className="product-card__pricing">
+                      <div className="product-card__pricing-main">
+                        <span className="product-card__amount">
+                          {currencyFormatter.format(product.price_transfer ?? 0)}
+                        </span>
+                        <span className="product-card__label">Transferencia</span>
+                      </div>
+                      {product.price_card !== null && product.price_card !== undefined && (
+                        <div className="product-card__pricing-secondary">
+                          <span>{currencyFormatter.format(product.price_card)}</span>
+                          <span className="product-card__label">Con tarjeta</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="product-card__actions">
-                    <button className="product-card__cta" onClick={() => addToCart(product)}>
-                      Agregar al carrito
-                    </button>
-                    <a
-                      className="product-card__cta product-card__cta--link"
-                      href={product.payment_link || 'https://mpago.li/2i3s2r8'}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      Pagar ahora
-                    </a>
-                  </div>
-                </article>
-              ))}
-              {!products.length && (
-                <div className="status">No hay productos disponibles en este momento.</div>
-              )}
+                    <div className="product-card__actions">
+                      <button className="product-card__cta" onClick={() => addToCart(product)}>
+                        Agregar al carrito
+                      </button>
+                      <a
+                        className="product-card__cta product-card__cta--link"
+                        href={product.payment_link || 'https://mpago.li/2i3s2r8'}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Pagar ahora
+                      </a>
+                    </div>
+                  </article>
+                ))}
+                {!filteredProducts.length && (
+                  <div className="status">No encontramos productos con esos filtros.</div>
+                )}
+              </div>
             </div>
 
             <aside className="cart">
@@ -212,9 +349,17 @@ export function CatalogPage() {
                     <li key={item.id} className="cart__item">
                       <div>
                         <strong>{item.name}</strong>
-                        <p className="cart__item-price">
-                          ${Number(item.price || 0).toLocaleString('es-AR')}
-                        </p>
+                        <div className="cart__item-price">
+                          <span className="cart__price-main">
+                            {currencyFormatter.format(item.unitPrice)}
+                          </span>
+                          <span className="cart__price-label">Transferencia</span>
+                          {item.price_card !== null && item.price_card !== undefined && (
+                            <span className="cart__price-secondary">
+                              {currencyFormatter.format(item.price_card)} con tarjeta
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="cart__item-controls">
                         <button onClick={() => updateQuantity(item.id, -1)}>-</button>
@@ -229,7 +374,7 @@ export function CatalogPage() {
                 <>
                   <div className="cart__total">
                     <span>Total estimado</span>
-                    <strong>${total.toLocaleString('es-AR')}</strong>
+                    <strong>{currencyFormatter.format(total)}</strong>
                   </div>
                   <button className="cart__checkout" onClick={handleCheckout}>
                     Finalizar compra por WhatsApp

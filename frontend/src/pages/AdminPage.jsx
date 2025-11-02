@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import '../App.css';
 import { supabase } from '../lib/supabaseClient';
 
@@ -32,7 +32,8 @@ export function AdminPage() {
   const [productForm, setProductForm] = useState({
     name: '',
     description: '',
-    price: '',
+    priceTransfer: '',
+    priceCard: '',
     payment_link: '',
   });
   const [submitting, setSubmitting] = useState(false);
@@ -44,6 +45,15 @@ export function AdminPage() {
   const [editingId, setEditingId] = useState(null);
   const [currentImageUrl, setCurrentImageUrl] = useState('');
   const fileInputRef = useRef(null);
+  const priceFormatter = useMemo(
+    () =>
+      new Intl.NumberFormat('es-AR', {
+        style: 'currency',
+        currency: 'ARS',
+        maximumFractionDigits: 0,
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (isAuthenticated && typeof window !== 'undefined') {
@@ -56,7 +66,7 @@ export function AdminPage() {
     setProductsError('');
     const { data, error } = await supabase
       .from('products')
-      .select('id,name,description,price,image,payment_link,created_at')
+      .select('id,name,description,price,price_transfer,price_card,image,payment_link,created_at')
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -95,7 +105,8 @@ export function AdminPage() {
     setProductForm({
       name: '',
       description: '',
-      price: '',
+      priceTransfer: '',
+      priceCard: '',
       payment_link: '',
     });
     setImageFile(null);
@@ -108,8 +119,8 @@ export function AdminPage() {
 
   const handleProductSubmit = async (event) => {
     event.preventDefault();
-    if (!productForm.name || !productForm.price) {
-      setFeedback('Completá al menos nombre y precio.');
+    if (!productForm.name || !productForm.priceTransfer) {
+      setFeedback('Completá al menos nombre y el precio por transferencia.');
       return;
     }
 
@@ -152,10 +163,17 @@ export function AdminPage() {
       imageUrl = publicData?.publicUrl ?? null;
     }
 
+    const priceTransferValue = Number(productForm.priceTransfer) || 0;
+    const priceCardRaw = Number(productForm.priceCard);
+    const priceCardValue =
+      productForm.priceCard === '' || Number.isNaN(priceCardRaw) ? null : priceCardRaw;
+
     const payload = {
       name: productForm.name,
       description: productForm.description || null,
-      price: Number(productForm.price),
+      price_transfer: priceTransferValue,
+      price_card: priceCardValue,
+      price: priceTransferValue,
       image: imageUrl,
       payment_link: productForm.payment_link || null,
     };
@@ -199,7 +217,16 @@ export function AdminPage() {
     setProductForm({
       name: product.name ?? '',
       description: product.description ?? '',
-      price: product.price ? String(product.price) : '',
+      priceTransfer:
+        product.price_transfer !== null && product.price_transfer !== undefined
+          ? String(product.price_transfer)
+          : product.price
+          ? String(product.price)
+          : '',
+      priceCard:
+        product.price_card !== null && product.price_card !== undefined
+          ? String(product.price_card)
+          : '',
       payment_link: product.payment_link ?? '',
     });
     setCurrentImageUrl(product.image ?? '');
@@ -330,17 +357,30 @@ export function AdminPage() {
             />
           </label>
           <label>
-            Precio
+            Precio transferencia
             <input
               type="number"
               min="0"
               step="0.01"
-              value={productForm.price}
+              value={productForm.priceTransfer}
               onChange={(event) =>
-                setProductForm((prev) => ({ ...prev, price: event.target.value }))
+                setProductForm((prev) => ({ ...prev, priceTransfer: event.target.value }))
               }
               placeholder="Ej. 1200"
               required
+            />
+          </label>
+          <label>
+            Precio con tarjeta (opcional)
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={productForm.priceCard}
+              onChange={(event) =>
+                setProductForm((prev) => ({ ...prev, priceCard: event.target.value }))
+              }
+              placeholder="Ej. 1350"
             />
           </label>
           <label>
@@ -425,7 +465,17 @@ export function AdminPage() {
                 <li key={product.id} className="admin-list__item">
                   <div className="admin-list__info">
                     <strong>{product.name}</strong>
-                    <span>${Number(product.price || 0).toLocaleString('es-AR')}</span>
+                    <div className="admin-list__prices">
+                      <span className="admin-list__price-main">
+                        {priceFormatter.format(product.price_transfer ?? product.price ?? 0)}
+                      </span>
+                      <span className="admin-list__price-label">Transferencia</span>
+                      {product.price_card !== null && product.price_card !== undefined && (
+                        <span className="admin-list__price-secondary">
+                          {priceFormatter.format(product.price_card)} con tarjeta
+                        </span>
+                      )}
+                    </div>
                     {product.description && <p>{product.description}</p>}
                     {product.payment_link && (
                       <a
