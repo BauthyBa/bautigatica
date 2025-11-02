@@ -61,6 +61,16 @@ export function CatalogPage() {
   const [viewMode, setViewMode] = useState('grid');
   const [searchTerm, setSearchTerm] = useState('');
   const [priceCap, setPriceCap] = useState(null);
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [mobileCartOpen, setMobileCartOpen] = useState(false);
+  const [quickViewProduct, setQuickViewProduct] = useState(null);
+  const handleCloseOverlays = () => {
+    setMobileFiltersOpen(false);
+    setMobileCartOpen(false);
+    setQuickViewProduct(null);
+  };
+
   const currencyFormatter = useMemo(
     () =>
       new Intl.NumberFormat('es-AR', {
@@ -93,6 +103,36 @@ export function CatalogPage() {
 
     loadProducts();
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(max-width: 980px)');
+    const handleChange = (event) => {
+      setIsMobile(event.matches);
+      if (event.matches) {
+        setViewMode('grid');
+      } else {
+        setMobileFiltersOpen(false);
+        setMobileCartOpen(false);
+      }
+    };
+    handleChange(mq);
+    mq.addEventListener('change', handleChange);
+    return () => mq.removeEventListener('change', handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (!isMobile) {
+      document.body.style.overflow = '';
+      return;
+    }
+    const anyOpen = mobileFiltersOpen || mobileCartOpen || Boolean(quickViewProduct);
+    document.body.style.overflow = anyOpen ? 'hidden' : '';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isMobile, mobileFiltersOpen, mobileCartOpen, quickViewProduct]);
 
   useEffect(() => {
     if (!products.length) return;
@@ -214,7 +254,6 @@ export function CatalogPage() {
       ...lines,
       `Total: ${currencyFormatter.format(total)}`,
     ].join('\n');
-
     const whatsappNumber = '3515306105';
     const encodedMessage = encodeURIComponent(message);
     const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodedMessage}`;
@@ -234,58 +273,98 @@ export function CatalogPage() {
         <>
           {error && <div className="status status--error">{error}</div>}
           <section className="layout">
-            <aside className="filters">
-              <div className="filters__header">
-                <h2>Filtros</h2>
-                <button type="button" onClick={clearFilters}>
-                  Limpiar
+            {isMobile && (
+              <div className="mobile-toolbar">
+                <button
+                  type="button"
+                  className="mobile-toolbar__button"
+                  onClick={() => {
+                    setMobileFiltersOpen(true);
+                    setMobileCartOpen(false);
+                  }}
+                >
+                  Filtros
+                </button>
+                <button
+                  type="button"
+                  className="mobile-toolbar__button"
+                  onClick={() => {
+                    setMobileCartOpen(true);
+                    setMobileFiltersOpen(false);
+                  }}
+                >
+                  Carrito ({cartItems.length})
                 </button>
               </div>
-              <label className="filters__field">
-                Buscar
-                <input
-                  type="search"
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder="Nombre o descripción"
-                />
-              </label>
-              <div className="filters__field">
-                <span>Precio máximo</span>
-                <div className="filters__range">
-                  <input
-                    type="range"
-                    min={minPrice || 0}
-                    max={maxPrice || 0}
-                    value={priceCap ?? maxPrice ?? 0}
-                    onChange={(event) => setPriceCap(Number(event.target.value))}
-                    disabled={!maxPrice}
-                  />
-                  <span>
-                    {maxPrice
-                      ? `Hasta ${currencyFormatter.format(priceCap ?? maxPrice ?? 0)}`
-                      : 'Todos los precios'}
-                  </span>
+            )}
+            <aside
+              className={`filters ${
+                isMobile ? (mobileFiltersOpen ? 'is-mobile-open' : 'is-mobile-hidden') : ''
+              }`}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="filters__header">
+                <h2>Filtros</h2>
+                <div className="filters__header-actions">
+                  <button type="button" onClick={clearFilters}>
+                    Limpiar
+                  </button>
+                  {isMobile && (
+                    <button type="button" onClick={() => setMobileFiltersOpen(false)}>
+                      Cerrar
+                    </button>
+                  )}
                 </div>
               </div>
-              <div className="filters__field">
-                <span>Vista</span>
-                <div className="view-toggle">
-                  <button
-                    type="button"
-                    className={viewMode === 'grid' ? 'is-active' : ''}
-                    onClick={() => setViewMode('grid')}
-                  >
-                    Tarjetas
-                  </button>
-                  <button
-                    type="button"
-                    className={viewMode === 'row' ? 'is-active' : ''}
-                    onClick={() => setViewMode('row')}
-                  >
-                    Lista
-                  </button>
+              <div className="filters__rows">
+                <label className="filters__field">
+                  Buscar
+                  <input
+                    type="search"
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    placeholder="Nombre o descripción"
+                  />
+                </label>
+                <div className="filters__field">
+                  <span>Precio máximo</span>
+                  <div className="filters__range">
+                    <input
+                      type="range"
+                      min={minPrice || 0}
+                      max={maxPrice || 0}
+                      value={priceCap ?? maxPrice ?? 0}
+                      onChange={(event) => setPriceCap(Number(event.target.value))}
+                      disabled={!maxPrice}
+                    />
+                    <span>
+                      {maxPrice
+                        ? `Hasta ${currencyFormatter.format(priceCap ?? maxPrice ?? 0)}`
+                        : 'Todos los precios'}
+                    </span>
+                  </div>
                 </div>
+                {!isMobile && (
+                  <div className="filters__field">
+                    <span>Vista</span>
+                    <div className="view-toggle">
+                      <button
+                        type="button"
+                        className={viewMode === 'grid' ? 'is-active' : ''}
+                        onClick={() => setViewMode('grid')}
+                      >
+                        Tarjetas
+                      </button>
+                      <button
+                        type="button"
+                        className={viewMode === 'row' ? 'is-active' : ''}
+                        onClick={() => setViewMode('row')}
+                      >
+                        Lista
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </aside>
 
@@ -320,6 +399,13 @@ export function CatalogPage() {
                     </div>
                   </div>
                     <div className="product-card__actions">
+                      <button
+                        className="product-card__cta product-card__cta--ghost"
+                        type="button"
+                        onClick={() => setQuickViewProduct(product)}
+                      >
+                        Vista rápida
+                      </button>
                       <button className="product-card__cta" onClick={() => addToCart(product)}>
                         Agregar al carrito
                       </button>
@@ -340,8 +426,22 @@ export function CatalogPage() {
               </div>
             </div>
 
-            <aside className="cart">
-              <h2>Tu carrito</h2>
+            <aside
+              className={`cart ${
+                isMobile ? (mobileCartOpen ? 'is-mobile-open' : 'is-mobile-hidden') : ''
+              }`}
+              onClick={(event) => event.stopPropagation()}
+            >
+              {isMobile ? (
+                <div className="cart__header-mobile">
+                  <h2>Tu carrito</h2>
+                  <button type="button" onClick={() => setMobileCartOpen(false)}>
+                    Cerrar
+                  </button>
+                </div>
+              ) : (
+                <h2>Tu carrito</h2>
+              )}
               {!cartItems.length && <p className="cart__empty">Todavía no agregaste productos.</p>}
               {cartItems.length > 0 && (
                 <ul className="cart__list">
@@ -397,6 +497,62 @@ export function CatalogPage() {
         <span>¿Sos del equipo de Panaderia Bautista?</span>
         <Link to="/admin">Ingresar al panel</Link>
       </footer>
+      {(isMobile && (mobileFiltersOpen || mobileCartOpen)) && (
+        <div className="drawer-backdrop" onClick={handleCloseOverlays} />
+      )}
+      {quickViewProduct && (
+        <>
+          <div className="drawer-backdrop" onClick={handleCloseOverlays} />
+          <div className="quickview" onClick={(event) => event.stopPropagation()}>
+            <button className="quickview__close" type="button" onClick={handleCloseOverlays}>
+              ×
+            </button>
+            <div className="quickview__content">
+              <img src={quickViewProduct.image} alt={quickViewProduct.name} />
+              <div className="quickview__details">
+                <h2>{quickViewProduct.name}</h2>
+                <p>{quickViewProduct.description}</p>
+                <div className="quickview__pricing">
+                  <div>
+                    <span className="quickview__amount">
+                      {currencyFormatter.format(quickViewProduct.price_transfer ?? 0)}
+                    </span>
+                    <span className="quickview__label">Transferencia</span>
+                  </div>
+                  <div>
+                    <span className="quickview__amount quickview__amount--secondary">
+                      {currencyFormatter.format(
+                        quickViewProduct.price_card ?? quickViewProduct.price_transfer ?? 0,
+                      )}
+                    </span>
+                    <span className="quickview__label">Con tarjeta</span>
+                  </div>
+                </div>
+                <div className="quickview__actions">
+                  <button
+                    className="product-card__cta"
+                    type="button"
+                    onClick={() => {
+                      addToCart(quickViewProduct);
+                      handleCloseOverlays();
+                    }}
+                  >
+                    Agregar al carrito
+                  </button>
+                  <a
+                    className="product-card__cta product-card__cta--link"
+                    href={quickViewProduct.payment_link || 'https://mpago.li/2i3s2r8'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Pagar ahora
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
