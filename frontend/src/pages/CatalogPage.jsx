@@ -261,7 +261,7 @@ export function CatalogPage() {
   return (
     <div className="page page--catalog">
       <header className="hero">
-        <h1>Panaderia Bautista</h1>
+        <h1>Meriendas y Postres</h1>
       </header>
 
       {loading ? (
@@ -455,14 +455,7 @@ export function CatalogPage() {
                   <button className="cart__checkout" onClick={handleCheckout}>
                     Finalizar compra por WhatsApp
                   </button>
-                  <a
-                    className="cart__checkout cart__checkout--mp"
-                    href="https://link.mercadopago.com.ar/bautibarbero"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Pagar con Tarjeta
-                  </a>
+                  <p className="cart__note">Coordinamos la entrega por WhatsApp luego de tu pedido.</p>
                 </>
               )}
             </aside>

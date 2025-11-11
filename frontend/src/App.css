@@ -604,17 +604,14 @@
   transition: transform 0.2s ease;
 }
 
-.cart__checkout:hover {
-  transform: translateY(-1px);
-}
-
-.cart__checkout--mp {
-  background: linear-gradient(135deg, #0ea5e9, #38bdf8);
+.cart__note {
+  margin: 0.5rem 0 1rem;
+  font-size: 0.9rem;
+  color: #475569;
   text-align: center;
-  display: inline-block;
 }
 
-.cart__checkout--mp:hover {
+.cart__checkout:hover {
   transform: translateY(-1px);
 }
 
