@@ -251,7 +251,7 @@ export function CatalogPage() {
       ...lines,
       `Total: ${currencyFormatter.format(total)}`,
     ].join('\n');
-    const whatsappNumber = '351530610';
+    const whatsappNumber = '3515306105';
     const encodedMessage = encodeURIComponent(message);
     const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodedMessage}`;
     window.open(whatsappUrl, '_blank');
