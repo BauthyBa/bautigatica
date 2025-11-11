@@ -247,7 +247,7 @@ export function CatalogPage() {
     });
 
     const message = [
-      'Hola! Quisiera hacer la siguiente compra:',
+      'Hola Papudo quisiera pedir lo siguente',
       ...lines,
       `Total: ${currencyFormatter.format(total)}`,
     ].join('\n');
