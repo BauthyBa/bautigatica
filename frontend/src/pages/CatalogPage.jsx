@@ -58,7 +58,6 @@ export function CatalogPage() {
   const [cart, setCart] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [viewMode, setViewMode] = useState('grid');
   const [searchTerm, setSearchTerm] = useState('');
   const [priceCap, setPriceCap] = useState(null);
   const [isMobile, setIsMobile] = useState(false);
@@ -109,9 +108,7 @@ export function CatalogPage() {
     const mq = window.matchMedia('(max-width: 980px)');
     const handleChange = (event) => {
       setIsMobile(event.matches);
-      if (event.matches) {
-        setViewMode('grid');
-      } else {
+      if (!event.matches) {
         setMobileFiltersOpen(false);
         setMobileCartOpen(false);
       }
@@ -344,36 +341,15 @@ export function CatalogPage() {
                     </span>
                   </div>
                 </div>
-                {!isMobile && (
-                  <div className="filters__field">
-                    <span>Vista</span>
-                    <div className="view-toggle">
-                      <button
-                        type="button"
-                        className={viewMode === 'grid' ? 'is-active' : ''}
-                        onClick={() => setViewMode('grid')}
-                      >
-                        Tarjetas
-                      </button>
-                      <button
-                        type="button"
-                        className={viewMode === 'row' ? 'is-active' : ''}
-                        onClick={() => setViewMode('row')}
-                      >
-                        Lista
-                      </button>
-                    </div>
-                  </div>
-                )}
               </div>
             </aside>
 
             <div className="catalog-area">
-              <div className={`catalog ${viewMode === 'row' ? 'catalog--row' : ''}`}>
+              <div className="catalog">
                 {filteredProducts.map((product) => (
                   <article
                     key={product.id}
-                    className={`product-card ${viewMode === 'row' ? 'product-card--row' : ''}`}
+                    className="product-card"
                   >
                     <img
                       src={product.image}

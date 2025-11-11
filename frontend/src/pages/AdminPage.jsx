@@ -22,6 +22,146 @@ const extractStoragePath = (url) => {
   }
 };
 
+const normalizeText = (text) =>
+  (text ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const parseMessageForProducts = (message, productList) => {
+  const normalizedMessage = normalizeText(message);
+  if (!normalizedMessage) return [];
+
+  const aggregated = new Map();
+
+  for (const product of productList) {
+    const normalizedName = normalizeText(product.name);
+    if (!normalizedName) continue;
+    const tokens = normalizedName.split(' ').filter(Boolean).map(escapeRegex);
+    if (!tokens.length) continue;
+    const namePattern = tokens.join('\\s+');
+    const quantityBeforeRegex = new RegExp(
+      `(\\d+(?:[\\.,]\\d*)?)\\s*(?:x|porciones?|porcion|tortas?|torta|u|unidad(?:es)?|porc)?\\s*(?:de\\s+)?${namePattern}\\b`,
+      'gi',
+    );
+    let match;
+    while ((match = quantityBeforeRegex.exec(normalizedMessage)) !== null) {
+      const quantity = Number.parseFloat(match[1].replace(',', '.')) || 0;
+      if (quantity <= 0) continue;
+      aggregated.set(product.id, (aggregated.get(product.id) ?? 0) + quantity);
+    }
+
+    const quantityAfterRegex = new RegExp(
+      `\\b${namePattern}\\s*(?:x|porciones?|porcion|tortas?|torta|u|unidad(?:es)?|porc)?\\s*(\\d+(?:[\\.,]\\d*)?)`,
+      'gi',
+    );
+    while ((match = quantityAfterRegex.exec(normalizedMessage)) !== null) {
+      const quantity = Number.parseFloat(match[1].replace(',', '.')) || 0;
+      if (quantity <= 0) continue;
+      aggregated.set(product.id, (aggregated.get(product.id) ?? 0) + quantity);
+    }
+  }
+
+  return Array.from(aggregated.entries()).map(([productId, quantity]) => ({
+    productId,
+    quantity,
+  }));
+};
+
+const inferProductCategory = (name) => {
+  const normalized = normalizeText(name);
+  if (!normalized) return null;
+  if (/\btorta/.test(normalized)) return 'torta';
+  if (/\bporciones?/.test(normalized) || normalized.includes('porcion')) return 'porcion';
+  const portionHints = [
+    'brownie',
+    'budin',
+    'alfajor',
+    'medialuna',
+    'cuadrado',
+    'slice',
+    'cupcake',
+    'muffin',
+    'galleta',
+    'cookie',
+  ];
+  if (portionHints.some((hint) => normalized.includes(hint))) return 'porcion';
+  return null;
+};
+
+const detectGenericUnits = (message) => {
+  const normalized = normalizeText(message);
+  if (!normalized) return { porciones: 0, tortas: 0 };
+
+  const sumMatches = (regex) => {
+    let total = 0;
+    let match;
+    while ((match = regex.exec(normalized)) !== null) {
+      const value = Number.parseFloat(match[1].replace(',', '.')) || 0;
+      if (value > 0) total += value;
+    }
+    return total;
+  };
+
+  return {
+    porciones: sumMatches(/(\d+(?:[\\.,]\d*)?)\s*(?:x|porciones?|porcion|porc)\b/g),
+    tortas: sumMatches(/(\d+(?:[\\.,]\d*)?)\s*(?:x|tortas?|torta)\b/g),
+  };
+};
+
+const computePurchaseSummary = (items, productList, message) => {
+  const productMap = new Map(productList.map((product) => [product.id, product]));
+  const totals = { totalItems: 0, porciones: 0, tortas: 0 };
+
+  for (const item of items) {
+    const quantity = Number(item.quantity) || 0;
+    if (quantity <= 0) continue;
+    totals.totalItems += quantity;
+    const product = productMap.get(item.productId);
+    const declaredCategory =
+      typeof item.category === 'string' && item.category.trim().length > 0
+        ? item.category.trim()
+        : null;
+    const category =
+      declaredCategory ?? (product ? inferProductCategory(product.name ?? '') : null);
+    if (!category) continue;
+    if (category === 'torta') totals.tortas += quantity;
+    if (category === 'porcion') totals.porciones += quantity;
+  }
+
+  const fallback = detectGenericUnits(message);
+  if (totals.porciones === 0) totals.porciones = fallback.porciones;
+  if (totals.tortas === 0) totals.tortas = fallback.tortas;
+
+  return totals;
+};
+
+const computeAmountFromItems = (items, productMap) => {
+  if (!Array.isArray(items) || items.length === 0) return 0;
+  return items.reduce((sum, item) => {
+    const quantity = Number(item.quantity) || 0;
+    if (quantity <= 0) return sum;
+    const product =
+      productMap.get(item.productId ?? item.product_id) ??
+      [...productMap.values()].find((candidate) => candidate.name === item.product_name);
+    if (!product) return sum;
+    const unitPrice = Number(product.price_transfer ?? product.price ?? 0) || 0;
+    return sum + quantity * unitPrice;
+  }, 0);
+};
+
+const getPurchaseAmount = (purchase, productMap) => {
+  if (purchase?.total_amount !== null && purchase?.total_amount !== undefined) {
+    return Number(purchase.total_amount) || 0;
+  }
+  return computeAmountFromItems(purchase?.parsed_items ?? [], productMap);
+};
+
 export function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -44,6 +184,16 @@ export function AdminPage() {
   const [productsError, setProductsError] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [currentImageUrl, setCurrentImageUrl] = useState('');
+  const [whatsappMessage, setWhatsappMessage] = useState('');
+  const [parsedItems, setParsedItems] = useState([]);
+  const [parseError, setParseError] = useState('');
+  const [purchaseFeedback, setPurchaseFeedback] = useState('');
+  const [savingPurchase, setSavingPurchase] = useState(false);
+  const [purchases, setPurchases] = useState([]);
+  const [loadingPurchases, setLoadingPurchases] = useState(false);
+  const [purchasesError, setPurchasesError] = useState('');
+  const [deletingPurchaseId, setDeletingPurchaseId] = useState(null);
+  const [historyFeedback, setHistoryFeedback] = useState('');
   const fileInputRef = useRef(null);
   const priceFormatter = useMemo(
     () =>
@@ -54,6 +204,63 @@ export function AdminPage() {
       }),
     [],
   );
+
+  const purchaseSummary = useMemo(
+    () => computePurchaseSummary(parsedItems, products, whatsappMessage),
+    [parsedItems, products, whatsappMessage],
+  );
+
+  const productsById = useMemo(() => {
+    const map = new Map();
+    products.forEach((product) => {
+      map.set(product.id, product);
+    });
+    return map;
+  }, [products]);
+
+  const draftTotalAmount = useMemo(
+    () => computeAmountFromItems(parsedItems, productsById),
+    [parsedItems, productsById],
+  );
+
+  const purchaseRevenue = useMemo(
+    () => purchases.reduce((sum, purchase) => sum + getPurchaseAmount(purchase, productsById), 0),
+    [purchases, productsById],
+  );
+
+  const formatDate = (value) => {
+    if (!value) return '—';
+    try {
+      return new Date(value).toLocaleString('es-AR', {
+        dateStyle: 'short',
+        timeStyle: 'short',
+      });
+    } catch {
+      return value;
+    }
+  };
+
+  const getStoredItemsTotal = (purchase) => {
+    if (purchase?.total_items !== null && purchase?.total_items !== undefined) {
+      return Number(purchase.total_items) || 0;
+    }
+    if (Array.isArray(purchase?.parsed_items)) {
+      return purchase.parsed_items.reduce(
+        (sum, entry) => sum + (Number(entry.quantity) || 0),
+        0,
+      );
+    }
+    return 0;
+  };
+
+  const createPurchaseItem = (productId, quantity = 1) => {
+    const product = productsById.get(productId);
+    return {
+      productId,
+      quantity,
+      category: inferProductCategory(product?.name ?? '') ?? '',
+    };
+  };
 
   useEffect(() => {
     if (isAuthenticated && typeof window !== 'undefined') {
@@ -84,6 +291,32 @@ export function AdminPage() {
   useEffect(() => {
     if (!isAuthenticated) return;
     loadProducts();
+  }, [isAuthenticated]);
+
+  const loadPurchases = async () => {
+    setLoadingPurchases(true);
+    setPurchasesError('');
+    const { data, error } = await supabase
+      .from('purchases')
+      .select('id, raw_message, parsed_items, total_items, summary, total_amount, created_at')
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.error('Error al cargar compras', error);
+      setPurchasesError(
+        `No pudimos obtener las compras (${error.message ?? 'verificá la tabla "purchases" y las policies'}).`,
+      );
+      setPurchases([]);
+    } else {
+      setPurchases(data ?? []);
+    }
+    setLoadingPurchases(false);
+  };
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    loadPurchases();
   }, [isAuthenticated]);
 
   const handleLoginSubmit = (event) => {
@@ -276,6 +509,146 @@ export function AdminPage() {
     }
   };
 
+  const resetPurchaseForm = () => {
+    setWhatsappMessage('');
+    setParsedItems([]);
+    setParseError('');
+  };
+
+  const handleDetectPurchase = () => {
+    if (!whatsappMessage.trim()) {
+      setParseError('Pegá el mensaje de WhatsApp para analizarlo.');
+      setParsedItems([]);
+      return;
+    }
+    const detected = parseMessageForProducts(whatsappMessage, products);
+    if (!detected.length) {
+      setParseError('No encontramos coincidencias. Podés cargar la compra manualmente.');
+      setParsedItems([]);
+      return;
+    }
+    setParsedItems(detected.map((item) => createPurchaseItem(item.productId, item.quantity)));
+    setParseError('');
+  };
+
+  const handleAddPurchaseRow = () => {
+    if (!products.length) {
+      setParseError('Todavía no hay productos cargados para armar la compra.');
+      return;
+    }
+    setParsedItems((prev) => {
+      const previousProductId = prev.length > 0 ? prev[prev.length - 1].productId : products[0].id;
+      return [...prev, createPurchaseItem(previousProductId, 1)];
+    });
+    setParseError('');
+  };
+
+  const handlePurchaseItemChange = (index, field, value) => {
+    setParsedItems((prev) =>
+      prev.map((item, idx) => {
+        if (idx !== index) return item;
+        if (field === 'quantity') {
+          return { ...item, quantity: value };
+        }
+        if (field === 'productId') {
+          const product = productsById.get(value);
+          return {
+            ...item,
+            productId: value,
+            category: inferProductCategory(product?.name ?? '') ?? '',
+          };
+        }
+        if (field === 'category') {
+          return { ...item, category: value };
+        }
+        return item;
+      }),
+    );
+  };
+
+  const handleRemovePurchaseItem = (index) => {
+    setParsedItems((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleDeletePurchase = async (purchaseId) => {
+    const confirmed = window.confirm('¿Eliminar este registro de compra?');
+    if (!confirmed) return;
+    setDeletingPurchaseId(purchaseId);
+    setHistoryFeedback('');
+    try {
+      const { error } = await supabase.from('purchases').delete().eq('id', purchaseId);
+      if (error) throw error;
+      setHistoryFeedback('Compra eliminada.');
+      await loadPurchases();
+    } catch (error) {
+      console.error('Error al eliminar la compra', error);
+      setHistoryFeedback(`No pudimos eliminar la compra (${error.message}).`);
+    } finally {
+      setDeletingPurchaseId(null);
+    }
+  };
+
+  const handlePurchaseSave = async () => {
+    const message = whatsappMessage.trim();
+    if (!message) {
+      setPurchaseFeedback('Necesitamos el mensaje original para registrar la compra.');
+      return;
+    }
+
+    const sanitizedItems = parsedItems
+      .map((item) => {
+        const quantity = Number(item.quantity);
+        if (!Number.isFinite(quantity) || quantity <= 0) return null;
+        const product = productsById.get(item.productId);
+        if (!product) return null;
+        return {
+          product_id: product.id,
+          product_name: product.name,
+          quantity,
+          category: item.category || inferProductCategory(product.name ?? '') || null,
+        };
+      })
+      .filter(Boolean);
+
+    if (!sanitizedItems.length) {
+      setPurchaseFeedback('Agregá al menos un producto válido antes de guardar.');
+      return;
+    }
+
+    const summary = computePurchaseSummary(parsedItems, products, message);
+    const totalAmount = computeAmountFromItems(parsedItems, productsById);
+
+    setSavingPurchase(true);
+    setPurchaseFeedback('');
+    try {
+      const { error } = await supabase
+        .from('purchases')
+        .insert([
+          {
+            raw_message: message,
+            parsed_items: sanitizedItems,
+            total_items: summary.totalItems,
+            summary: { porciones: summary.porciones, tortas: summary.tortas },
+            total_amount: totalAmount,
+          },
+        ])
+        .select('id');
+
+      if (error) {
+        throw error;
+      }
+
+      setPurchaseFeedback('Compra guardada correctamente.');
+      resetPurchaseForm();
+      await loadPurchases();
+    } catch (error) {
+      console.error('Error al guardar la compra', error);
+      setPurchaseFeedback(`No pudimos guardar la compra (${error.message}).`);
+    } finally {
+      setSavingPurchase(false);
+    }
+  };
+
   const handleLogout = () => {
     setIsAuthenticated(false);
     if (typeof window !== 'undefined') {
@@ -283,6 +656,12 @@ export function AdminPage() {
     }
     resetForm();
     setProducts([]);
+    setWhatsappMessage('');
+    setParsedItems([]);
+    setPurchases([]);
+    setPurchasesError('');
+    setPurchaseFeedback('');
+    setParseError('');
   };
 
   if (!isAuthenticated) {
@@ -511,6 +890,257 @@ export function AdminPage() {
             </ul>
           </div>
         )}
+      </div>
+      <div className="admin-card admin-card--purchases">
+        <header className="admin-header">
+          <h2>Registro de compras</h2>
+          <button
+            type="button"
+            className="admin-secondary"
+            onClick={loadPurchases}
+            disabled={loadingPurchases}
+          >
+            {loadingPurchases ? 'Actualizando...' : 'Recargar historial'}
+          </button>
+        </header>
+        <label>
+          Mensaje recibido
+          <textarea
+            className="purchase-message"
+            rows={5}
+            value={whatsappMessage}
+            onChange={(event) => setWhatsappMessage(event.target.value)}
+            placeholder="Pegá acá el mensaje completo que te mandaron por WhatsApp"
+          />
+        </label>
+        <div className="purchase-actions">
+          <button
+            type="button"
+            className="admin-secondary"
+            onClick={handleDetectPurchase}
+            disabled={!products.length}
+          >
+            Detectar desde el mensaje
+          </button>
+          <button
+            type="button"
+            className="admin-secondary"
+            onClick={handleAddPurchaseRow}
+            disabled={!products.length}
+          >
+            Agregar fila manual
+          </button>
+        </div>
+        {parseError && <p className="admin-feedback admin-feedback--error">{parseError}</p>}
+        <div className="purchase-items">
+          {parsedItems.length ? (
+            <table className="purchase-items__table">
+              <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th>Cantidad</th>
+                  <th>Tipo</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {parsedItems.map((item, index) => (
+                  <tr key={`${item.productId}-${index}`}>
+                    <td>
+                      <select
+                        value={item.productId}
+                        onChange={(event) =>
+                          handlePurchaseItemChange(index, 'productId', event.target.value)
+                        }
+                      >
+                        {products.map((product) => (
+                          <option key={product.id} value={product.id}>
+                            {product.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={item.quantity}
+                        onChange={(event) =>
+                          handlePurchaseItemChange(index, 'quantity', event.target.value)
+                        }
+                      />
+                    </td>
+                    <td>
+                      <select
+                        value={item.category ?? ''}
+                        onChange={(event) =>
+                          handlePurchaseItemChange(index, 'category', event.target.value)
+                        }
+                      >
+                        <option value="">Automático</option>
+                        <option value="porcion">Porción</option>
+                        <option value="torta">Torta</option>
+                      </select>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="admin-secondary admin-secondary--ghost"
+                        onClick={() => handleRemovePurchaseItem(index)}
+                      >
+                        Quitar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="admin-hint">
+              Usá el detector o agregá filas manuales para armar la planilla.
+            </p>
+          )}
+        </div>
+        {parsedItems.length > 0 && (
+          <div className="purchase-summary">
+            <div>
+              <span>Total de items</span>
+              <strong>{purchaseSummary.totalItems}</strong>
+            </div>
+            <div>
+              <span>Porciones</span>
+              <strong>{purchaseSummary.porciones || 0}</strong>
+            </div>
+            <div>
+              <span>Tortas</span>
+              <strong>{purchaseSummary.tortas || 0}</strong>
+            </div>
+            <div>
+              <span>Ganancia estimada</span>
+              <strong>{priceFormatter.format(draftTotalAmount)}</strong>
+            </div>
+          </div>
+        )}
+        {purchaseFeedback && (
+          <p
+            className={`admin-feedback ${
+              purchaseFeedback.includes('correctamente')
+                ? 'admin-feedback--success'
+                : 'admin-feedback--error'
+            }`}
+          >
+            {purchaseFeedback}
+          </p>
+        )}
+        <div className="admin-form__actions">
+          <button
+            type="button"
+            className="admin-primary"
+            onClick={handlePurchaseSave}
+            disabled={savingPurchase || !parsedItems.length}
+          >
+            {savingPurchase ? 'Guardando compra...' : 'Guardar compra'}
+          </button>
+          <button
+            type="button"
+            className="admin-secondary"
+            onClick={() => {
+              resetPurchaseForm();
+              setPurchaseFeedback('');
+            }}
+            disabled={savingPurchase}
+          >
+            Limpiar
+          </button>
+        </div>
+        <section className="purchase-history">
+          <div className="purchase-history__header">
+            <h3>Historial reciente</h3>
+            {purchases.length > 0 && <span>{purchases.length} guardadas</span>}
+          </div>
+          <div className="purchase-revenue">
+            <span>Ganancias acumuladas</span>
+            <strong>{priceFormatter.format(purchaseRevenue)}</strong>
+          </div>
+          {historyFeedback && (
+            <p
+              className={`admin-feedback ${
+                historyFeedback.includes('eliminada') ? 'admin-feedback--success' : 'admin-feedback--error'
+              }`}
+            >
+              {historyFeedback}
+            </p>
+          )}
+          {loadingPurchases && <p className="admin-feedback">Cargando compras...</p>}
+          {purchasesError && (
+            <p className="admin-feedback admin-feedback--error">{purchasesError}</p>
+          )}
+          {!loadingPurchases && !purchasesError && purchases.length === 0 && (
+            <p className="admin-feedback">Todavía no registraste compras.</p>
+          )}
+          <ul className="purchase-history__items">
+            {purchases.map((purchase) => (
+              <li key={purchase.id} className="purchase-history__item">
+                <div className="purchase-history__meta">
+                  <div className="purchase-history__meta-info">
+                    <strong>{formatDate(purchase.created_at)}</strong>
+                    <span>{getStoredItemsTotal(purchase)} items</span>
+                  </div>
+                  <div className="purchase-history__meta-actions">
+                    <span className="purchase-history__amount">
+                      {priceFormatter.format(getPurchaseAmount(purchase, productsById))}
+                    </span>
+                    <button
+                      type="button"
+                      className="admin-secondary admin-secondary--ghost"
+                      onClick={() => handleDeletePurchase(purchase.id)}
+                      disabled={deletingPurchaseId === purchase.id}
+                    >
+                      {deletingPurchaseId === purchase.id ? 'Eliminando...' : 'Eliminar'}
+                    </button>
+                  </div>
+                </div>
+                {purchase.summary && (
+                  <div className="purchase-summary purchase-summary--inline">
+                    <div>
+                      <span>Porciones</span>
+                      <strong>{purchase.summary?.porciones ?? 0}</strong>
+                    </div>
+                    <div>
+                      <span>Tortas</span>
+                      <strong>{purchase.summary?.tortas ?? 0}</strong>
+                    </div>
+                  </div>
+                )}
+                {Array.isArray(purchase.parsed_items) && purchase.parsed_items.length > 0 && (
+                  <table className="purchase-history__table">
+                    <thead>
+                      <tr>
+                        <th>Producto</th>
+                        <th>Cantidad</th>
+                        <th>Tipo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {purchase.parsed_items.map((item, idx) => (
+                        <tr key={`${purchase.id}-${idx}`}>
+                          <td>{item.product_name ?? 'Producto'}</td>
+                          <td>{item.quantity}</td>
+                          <td>{item.category ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                <details className="purchase-history__raw">
+                  <summary>Ver mensaje original</summary>
+                  <pre>{purchase.raw_message}</pre>
+                </details>
+              </li>
+            ))}
+          </ul>
+        </section>
       </div>
     </div>
   );
